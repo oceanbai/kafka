@@ -661,6 +661,8 @@ project(':core') {
 
   dependencies {
     compile project(':clients')
+    compile 'log4j:log4j:1.2.17'    //编译时需要的jar
+    compile "org.slf4j:slf4j-simple:1.6.1"
     compile libs.jacksonDatabind
     compile libs.jacksonModuleScala
     compile libs.jacksonDataformatCsv
