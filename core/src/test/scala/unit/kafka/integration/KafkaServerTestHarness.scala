@@ -23,8 +23,8 @@ import java.util.Arrays
 import kafka.server._
 import kafka.utils.TestUtils
 import kafka.zk.ZooKeeperTestHarness
-import org.apache.kafka.common.security.auth.{KafkaPrincipal, SecurityProtocol}
-import org.junit.{After, Before}
+import org.apache.kafka.common.security.auth.SecurityProtocol
+import org.junit.jupiter.api.{AfterEach, BeforeEach}
 
 import scala.collection.Seq
 import scala.collection.mutable.{ArrayBuffer, Buffer}
@@ -32,6 +32,7 @@ import java.util.Properties
 
 import org.apache.kafka.common.KafkaException
 import org.apache.kafka.common.network.ListenerName
+import org.apache.kafka.common.security.scram.ScramCredential
 import org.apache.kafka.common.utils.Time
 
 /**
@@ -42,7 +43,6 @@ abstract class KafkaServerTestHarness extends ZooKeeperTestHarness {
   var servers: Buffer[KafkaServer] = new ArrayBuffer
   var brokerList: String = null
   var alive: Array[Boolean] = null
-  val kafkaPrincipalType = KafkaPrincipal.USER_TYPE
 
   /**
    * Implementations must override this method to return a set of KafkaConfigs. This method will be invoked for every
@@ -85,8 +85,9 @@ abstract class KafkaServerTestHarness extends ZooKeeperTestHarness {
   protected def serverSaslProperties: Option[Properties] = None
   protected def clientSaslProperties: Option[Properties] = None
   protected def brokerTime(brokerId: Int): Time = Time.SYSTEM
+  protected def enableForwarding: Boolean = false
 
-  @Before
+  @BeforeEach
   override def setUp(): Unit = {
     super.setUp()
 
@@ -98,8 +99,14 @@ abstract class KafkaServerTestHarness extends ZooKeeperTestHarness {
 
     // Add each broker to `servers` buffer as soon as it is created to ensure that brokers
     // are shutdown cleanly in tearDown even if a subsequent broker fails to start
-    for (config <- configs)
-      servers += TestUtils.createServer(config, time = brokerTime(config.brokerId))
+    for (config <- configs) {
+      servers += TestUtils.createServer(
+        config,
+        time = brokerTime(config.brokerId),
+        threadNamePrefix = None,
+        enableForwarding
+      )
+    }
     brokerList = TestUtils.bootstrapServers(servers, listenerName)
     alive = new Array[Boolean](servers.length)
     Arrays.fill(alive, true)
@@ -108,7 +115,7 @@ abstract class KafkaServerTestHarness extends ZooKeeperTestHarness {
     configureSecurityAfterServersStart()
   }
 
-  @After
+  @AfterEach
   override def tearDown(): Unit = {
     if (servers != null) {
       TestUtils.shutdownServers(servers)
@@ -160,4 +167,12 @@ abstract class KafkaServerTestHarness extends ZooKeeperTestHarness {
       alive(i) = true
     }
   }
+
+  def waitForUserScramCredentialToAppearOnAllBrokers(clientPrincipal: String, mechanismName: String): Unit = {
+    servers.foreach { server =>
+      val cache = server.credentialProvider.credentialCache.cache(mechanismName, classOf[ScramCredential])
+      TestUtils.waitUntilTrue(() => cache.get(clientPrincipal) != null, s"SCRAM credentials not created for $clientPrincipal")
+    }
+  }
+
 }

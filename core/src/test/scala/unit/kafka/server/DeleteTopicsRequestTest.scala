@@ -24,10 +24,10 @@ import kafka.utils._
 import org.apache.kafka.common.message.DeleteTopicsRequestData
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.{DeleteTopicsRequest, DeleteTopicsResponse, MetadataRequest, MetadataResponse}
-import org.junit.Assert._
-import org.junit.Test
+import org.junit.jupiter.api.Assertions._
+import org.junit.jupiter.api.Test
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 
 class DeleteTopicsRequestTest extends BaseRequestTest {
 
@@ -52,8 +52,8 @@ class DeleteTopicsRequestTest extends BaseRequestTest {
   private def validateValidDeleteTopicRequests(request: DeleteTopicsRequest): Unit = {
     val response = sendDeleteTopicsRequest(request)
     val error = response.errorCounts.asScala.find(_._1 != Errors.NONE)
-    assertTrue(s"There should be no errors, found ${response.data.responses.asScala}", error.isEmpty)
-    request.data.topicNames.asScala.foreach { topic =>
+    assertTrue(error.isEmpty, s"There should be no errors, found ${response.data.responses.asScala}")
+    request.data.topicNames.forEach { topic =>
       validateTopicIsDeleted(topic)
     }
   }
@@ -100,10 +100,10 @@ class DeleteTopicsRequestTest extends BaseRequestTest {
     val errors = response.data.responses
 
     val errorCount = response.errorCounts().asScala.foldLeft(0)(_+_._2)
-    assertEquals("The response size should match", expectedResponse.size, errorCount)
+    assertEquals(expectedResponse.size, errorCount, "The response size should match")
 
     expectedResponse.foreach { case (topic, expectedError) =>
-      assertEquals("The response error should match", expectedResponse(topic).code, errors.find(topic).errorCode)
+      assertEquals(expectedResponse(topic).code, errors.find(topic).errorCode, "The response error should match")
       // If no error validate the topic was deleted
       if (expectedError == Errors.NONE) {
         validateTopicIsDeleted(topic)
@@ -120,7 +120,7 @@ class DeleteTopicsRequestTest extends BaseRequestTest {
     val response = sendDeleteTopicsRequest(request, notControllerSocketServer)
 
     val error = response.data.responses().find("not-controller").errorCode()
-    assertEquals("Expected controller error when routed incorrectly",  Errors.NOT_CONTROLLER.code, error)
+    assertEquals(Errors.NOT_CONTROLLER.code,  error, "Expected controller error when routed incorrectly")
   }
 
   private def validateTopicIsDeleted(topic: String): Unit = {

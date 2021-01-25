@@ -26,6 +26,7 @@ import com.yammer.metrics.core.MetricName
 import kafka.metrics.KafkaMetricsGroup
 import kafka.utils.CoreUtils.{inLock, inReadLock, inWriteLock}
 import kafka.utils.{KafkaScheduler, Logging}
+import kafka.zookeeper.ZooKeeperClient._
 import org.apache.kafka.common.utils.Time
 import org.apache.zookeeper.AsyncCallback.{Children2Callback, DataCallback, StatCallback}
 import org.apache.zookeeper.KeeperException.Code
@@ -35,9 +36,13 @@ import org.apache.zookeeper.data.{ACL, Stat}
 import org.apache.zookeeper._
 import org.apache.zookeeper.client.ZKClientConfig
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 import scala.collection.Seq
 import scala.collection.mutable.Set
+
+object ZooKeeperClient {
+  val RetryBackoffMs = 1000
+}
 
 /**
  * A ZooKeeper client that encourages pipelined requests.
@@ -81,7 +86,8 @@ class ZooKeeperClient(connectString: String,
   private val zNodeChildChangeHandlers = new ConcurrentHashMap[String, ZNodeChildChangeHandler]().asScala
   private val inFlightRequests = new Semaphore(maxInFlightRequests)
   private val stateChangeHandlers = new ConcurrentHashMap[String, StateChangeHandler]().asScala
-  private[zookeeper] val expiryScheduler = new KafkaScheduler(threads = 1, "zk-session-expiry-handler")
+  private[zookeeper] val reinitializeScheduler = new KafkaScheduler(threads = 1, s"zk-client-${threadPrefix}reinit-")
+  private var isFirstConnectionEstablished = false
 
   private val metricNames = Set[String]()
 
@@ -115,7 +121,7 @@ class ZooKeeperClient(connectString: String,
 
   metricNames += "SessionState"
 
-  expiryScheduler.startup()
+  reinitializeScheduler.startup()
   try waitUntilConnected(connectionTimeoutMs, TimeUnit.MILLISECONDS)
   catch {
     case e: Throwable =>
@@ -189,7 +195,10 @@ class ZooKeeperClient(connectString: String,
     def responseMetadata(sendTimeMs: Long) = new ResponseMetadata(sendTimeMs, receivedTimeMs = time.hiResClockMs())
 
     val sendTimeMs = time.hiResClockMs()
-    request match {
+
+    // Cast to AsyncRequest to workaround a scalac bug that results in an false exhaustiveness warning
+    // with -Xlint:strict-unsealed-patmat
+    (request: AsyncRequest) match {
       case ExistsRequest(path, ctx) =>
         zooKeeper.exists(path, shouldWatch(request), new StatCallback {
           def processResult(rc: Int, path: String, ctx: Any, stat: Stat): Unit =
@@ -198,9 +207,9 @@ class ZooKeeperClient(connectString: String,
       case GetDataRequest(path, ctx) =>
         zooKeeper.getData(path, shouldWatch(request), new DataCallback {
           def processResult(rc: Int, path: String, ctx: Any, data: Array[Byte], stat: Stat): Unit =
-            callback(GetDataResponse(Code.get(rc), path, Option(ctx), data, stat, responseMetadata(sendTimeMs))),
+            callback(GetDataResponse(Code.get(rc), path, Option(ctx), data, stat, responseMetadata(sendTimeMs)))
         }, ctx.orNull)
-      case GetChildrenRequest(path, ctx) =>
+      case GetChildrenRequest(path, _, ctx) =>
         zooKeeper.getChildren(path, shouldWatch(request), new Children2Callback {
           def processResult(rc: Int, path: String, ctx: Any, children: JList[String], stat: Stat): Unit =
             callback(GetChildrenResponse(Code.get(rc), path, Option(ctx), Option(children).map(_.asScala).getOrElse(Seq.empty),
@@ -269,6 +278,7 @@ class ZooKeeperClient(connectString: String,
       } else if (state == States.CLOSED) {
         throw new ZooKeeperClientExpiredException("Session expired either before or while waiting for connection")
       }
+      isFirstConnectionEstablished = true
     }
     info("Connected.")
   }
@@ -276,7 +286,7 @@ class ZooKeeperClient(connectString: String,
   // If this method is changed, the documentation for registerZNodeChangeHandler and/or registerZNodeChildChangeHandler
   // may need to be updated.
   private def shouldWatch(request: AsyncRequest): Boolean = request match {
-    case _: GetChildrenRequest => zNodeChildChangeHandlers.contains(request.path)
+    case GetChildrenRequest(_, registerWatch, _) => registerWatch && zNodeChildChangeHandlers.contains(request.path)
     case _: ExistsRequest | _: GetDataRequest => zNodeChangeHandlers.contains(request.path)
     case _ => throw new IllegalArgumentException(s"Request $request is not watchable")
   }
@@ -344,7 +354,7 @@ class ZooKeeperClient(connectString: String,
     // Shutdown scheduler outside of lock to avoid deadlock if scheduler
     // is waiting for lock to process session expiry. Close expiry thread
     // first to ensure that new clients are not created during close().
-    expiryScheduler.shutdown()
+    reinitializeScheduler.shutdown()
 
     inWriteLock(initializationLock) {
       zNodeChangeHandlers.clear()
@@ -383,7 +393,7 @@ class ZooKeeperClient(connectString: String,
           } catch {
             case e: Exception =>
               info("Error when recreating ZooKeeper, retrying after a short sleep", e)
-              Thread.sleep(1000)
+              Thread.sleep(RetryBackoffMs)
           }
         }
       }
@@ -419,12 +429,14 @@ class ZooKeeperClient(connectString: String,
   }
 
   // Visibility for testing
-  private[zookeeper] def scheduleSessionExpiryHandler(): Unit = {
-    expiryScheduler.scheduleOnce("zk-session-expired", () => {
-      info("Session expired.")
+  private[zookeeper] def scheduleReinitialize(name: String, message: String, delayMs: Long): Unit = {
+    reinitializeScheduler.schedule(name, () => {
+      info(message)
       reinitialize()
-    })
+    }, delayMs, period = -1L, unit = TimeUnit.MILLISECONDS)
   }
+
+  private def threadPrefix: String = name.map(n => n.replaceAll("\\s", "") + "-").getOrElse("")
 
   // package level visibility for testing only
   private[zookeeper] object ZooKeeperClientWatcher extends Watcher {
@@ -440,8 +452,15 @@ class ZooKeeperClient(connectString: String,
           if (state == KeeperState.AuthFailed) {
             error("Auth failed.")
             stateChangeHandlers.values.foreach(_.onAuthFailure())
+
+            // If this is during initial startup, we fail fast. Otherwise, schedule retry.
+            val initialized = inLock(isConnectedOrExpiredLock) {
+              isFirstConnectionEstablished
+            }
+            if (initialized)
+              scheduleReinitialize("auth-failed", "Reinitializing due to auth failure.", RetryBackoffMs)
           } else if (state == KeeperState.Expired) {
-            scheduleSessionExpiryHandler()
+            scheduleReinitialize("session-expired", "Session expired.", delayMs = 0L)
           }
         case Some(path) =>
           (event.getType: @unchecked) match {
@@ -536,7 +555,7 @@ case class SetAclRequest(path: String, acl: Seq[ACL], version: Int, ctx: Option[
   type Response = SetAclResponse
 }
 
-case class GetChildrenRequest(path: String, ctx: Option[Any] = None) extends AsyncRequest {
+case class GetChildrenRequest(path: String, registerWatch: Boolean, ctx: Option[Any] = None) extends AsyncRequest {
   type Response = GetChildrenResponse
 }
 

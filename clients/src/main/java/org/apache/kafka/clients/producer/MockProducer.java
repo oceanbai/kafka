@@ -69,7 +69,7 @@ public class MockProducer<K, V> implements Producer<K, V> {
     private boolean producerFenced;
     private boolean sentOffsets;
     private long commitCount = 0L;
-    private Map<MetricName, Metric> mockMetrics;
+    private final Map<MetricName, Metric> mockMetrics;
 
     public RuntimeException initTransactionException = null;
     public RuntimeException beginTransactionException = null;
@@ -302,13 +302,19 @@ public class MockProducer<K, V> implements Producer<K, V> {
         int partition = 0;
         if (!this.cluster.partitionsForTopic(record.topic()).isEmpty())
             partition = partition(record, this.cluster);
+        else {
+            //just to throw ClassCastException if serializers are not the proper ones to serialize key/value
+            keySerializer.serialize(record.topic(), record.key());
+            valueSerializer.serialize(record.topic(), record.value());
+        }
+            
         TopicPartition topicPartition = new TopicPartition(record.topic(), partition);
         ProduceRequestResult result = new ProduceRequestResult(topicPartition);
         FutureRecordMetadata future = new FutureRecordMetadata(result, 0, RecordBatch.NO_TIMESTAMP,
                 0L, 0, 0, Time.SYSTEM);
         long offset = nextOffset(topicPartition);
         Completion completion = new Completion(offset, new RecordMetadata(topicPartition, 0, offset,
-                RecordBatch.NO_TIMESTAMP, Long.valueOf(0L), 0, 0), result, callback);
+                RecordBatch.NO_TIMESTAMP, 0L, 0, 0), result, callback);
 
         if (!this.transactionInFlight)
             this.sent.add(record);

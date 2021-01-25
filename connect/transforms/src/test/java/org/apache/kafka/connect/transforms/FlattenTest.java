@@ -22,40 +22,43 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.source.SourceRecord;
-import org.junit.After;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class FlattenTest {
     private final Flatten<SourceRecord> xformKey = new Flatten.Key<>();
     private final Flatten<SourceRecord> xformValue = new Flatten.Value<>();
 
-    @After
+    @AfterEach
     public void teardown() {
         xformKey.close();
         xformValue.close();
     }
 
-    @Test(expected = DataException.class)
+    @Test
     public void topLevelStructRequired() {
         xformValue.configure(Collections.<String, String>emptyMap());
-        xformValue.apply(new SourceRecord(null, null, "topic", 0, Schema.INT32_SCHEMA, 42));
+        assertThrows(DataException.class, () -> xformValue.apply(new SourceRecord(null, null,
+                "topic", 0, Schema.INT32_SCHEMA, 42)));
     }
 
-    @Test(expected = DataException.class)
+    @Test
     public void topLevelMapRequired() {
         xformValue.configure(Collections.<String, String>emptyMap());
-        xformValue.apply(new SourceRecord(null, null, "topic", 0, null, 42));
+        assertThrows(DataException.class, () -> xformValue.apply(new SourceRecord(null, null,
+                "topic", 0, null, 42)));
     }
 
     @Test
@@ -258,11 +261,12 @@ public class FlattenTest {
         assertEquals(12, transformedMap.get("A.B"));
     }
 
-    @Test(expected = DataException.class)
+    @Test
     public void testUnsupportedTypeInMap() {
         xformValue.configure(Collections.<String, String>emptyMap());
         Object value = Collections.singletonMap("foo", Arrays.asList("bar", "baz"));
-        xformValue.apply(new SourceRecord(null, null, "topic", 0, null, value));
+        assertThrows(DataException.class, () -> xformValue.apply(new SourceRecord(null, null,
+                "topic", 0, null, value)));
     }
 
     @Test
@@ -296,5 +300,30 @@ public class FlattenTest {
         // the parent didn't specify the default explicitly, we should still be using the field's normal default
         Schema transformedOptFieldSchema = SchemaBuilder.string().optional().defaultValue("child_default").build();
         assertEquals(transformedOptFieldSchema, transformedSchema.field("opt_field").schema());
+    }
+
+    @Test
+    public void tombstoneEventWithoutSchemaShouldPassThrough() {
+        xformValue.configure(Collections.<String, String>emptyMap());
+
+        final SourceRecord record = new SourceRecord(null, null, "test", 0,
+                null, null);
+        final SourceRecord transformedRecord = xformValue.apply(record);
+
+        assertNull(transformedRecord.value());
+        assertNull(transformedRecord.valueSchema());
+    }
+
+    @Test
+    public void tombstoneEventWithSchemaShouldPassThrough() {
+        xformValue.configure(Collections.<String, String>emptyMap());
+
+        final Schema simpleStructSchema = SchemaBuilder.struct().name("name").version(1).doc("doc").field("magic", Schema.OPTIONAL_INT64_SCHEMA).build();
+        final SourceRecord record = new SourceRecord(null, null, "test", 0,
+                simpleStructSchema, null);
+        final SourceRecord transformedRecord = xformValue.apply(record);
+
+        assertNull(transformedRecord.value());
+        assertEquals(simpleStructSchema, transformedRecord.valueSchema());
     }
 }

@@ -18,7 +18,6 @@
 package kafka.admin
 
 import java.util.Optional
-
 import kafka.controller.ReplicaAssignment
 import kafka.server.BaseRequestTest
 import kafka.utils.TestUtils
@@ -27,10 +26,10 @@ import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.errors.InvalidReplicaAssignmentException
 import org.apache.kafka.common.requests.MetadataResponse.TopicMetadata
 import org.apache.kafka.common.requests.{MetadataRequest, MetadataResponse}
-import org.junit.Assert._
-import org.junit.{Before, Test}
+import org.junit.jupiter.api.Assertions._
+import org.junit.jupiter.api.{BeforeEach, Test}
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 
 class AddPartitionsTest extends BaseRequestTest {
 
@@ -49,37 +48,27 @@ class AddPartitionsTest extends BaseRequestTest {
   val topic5 = "new-topic5"
   val topic5Assignment = Map(1 -> ReplicaAssignment(Seq(0,1), List(), List()))
 
-  @Before
+  @BeforeEach
   override def setUp(): Unit = {
     super.setUp()
 
-    createTopic(topic1, partitionReplicaAssignment = topic1Assignment.mapValues(_.replicas).toMap)
-    createTopic(topic2, partitionReplicaAssignment = topic2Assignment.mapValues(_.replicas).toMap)
-    createTopic(topic3, partitionReplicaAssignment = topic3Assignment.mapValues(_.replicas).toMap)
-    createTopic(topic4, partitionReplicaAssignment = topic4Assignment.mapValues(_.replicas).toMap)
+    createTopic(topic1, partitionReplicaAssignment = topic1Assignment.map { case (k, v) => k -> v.replicas })
+    createTopic(topic2, partitionReplicaAssignment = topic2Assignment.map { case (k, v) => k -> v.replicas })
+    createTopic(topic3, partitionReplicaAssignment = topic3Assignment.map { case (k, v) => k -> v.replicas })
+    createTopic(topic4, partitionReplicaAssignment = topic4Assignment.map { case (k, v) => k -> v.replicas })
   }
 
   @Test
   def testWrongReplicaCount(): Unit = {
-    try {
-      adminZkClient.addPartitions(topic1, topic1Assignment, adminZkClient.getBrokerMetadatas(), 2,
-        Some(Map(0 -> Seq(0, 1), 1 -> Seq(0, 1, 2))))
-      fail("Add partitions should fail")
-    } catch {
-      case _: InvalidReplicaAssignmentException => //this is good
-    }
+    assertThrows(classOf[InvalidReplicaAssignmentException], () => adminZkClient.addPartitions(topic1, topic1Assignment, adminZkClient.getBrokerMetadatas(), 2,
+      Some(Map(0 -> Seq(0, 1), 1 -> Seq(0, 1, 2)))))
   }
 
   @Test
   def testMissingPartition0(): Unit = {
-    try {
-      adminZkClient.addPartitions(topic5, topic5Assignment, adminZkClient.getBrokerMetadatas(), 2,
-        Some(Map(1 -> Seq(0, 1), 2 -> Seq(0, 1, 2))))
-      fail("Add partitions should fail")
-    } catch {
-      case e: AdminOperationException => //this is good
-        assertTrue(e.getMessage.contains("Unexpected existing replica assignment for topic 'new-topic5', partition id 0 is missing"))
-    }
+    val e = assertThrows(classOf[AdminOperationException], () => adminZkClient.addPartitions(topic5, topic5Assignment, adminZkClient.getBrokerMetadatas(), 2,
+      Some(Map(1 -> Seq(0, 1), 2 -> Seq(0, 1, 2)))))
+    assertTrue(e.getMessage.contains("Unexpected existing replica assignment for topic 'new-topic5', partition id 0 is missing"))
   }
 
   @Test
@@ -188,11 +177,11 @@ class AddPartitionsTest extends BaseRequestTest {
   def validateLeaderAndReplicas(metadata: TopicMetadata, partitionId: Int, expectedLeaderId: Int,
                                 expectedReplicas: Set[Int]): Unit = {
     val partitionOpt = metadata.partitionMetadata.asScala.find(_.partition == partitionId)
-    assertTrue(s"Partition $partitionId should exist", partitionOpt.isDefined)
+    assertTrue(partitionOpt.isDefined, s"Partition $partitionId should exist")
     val partition = partitionOpt.get
 
-    assertEquals("Partition leader id should match", Optional.of(expectedLeaderId), partition.leaderId)
-    assertEquals("Replica set should match", expectedReplicas, partition.replicaIds.asScala.toSet)
+    assertEquals(Optional.of(expectedLeaderId), partition.leaderId, "Partition leader id should match")
+    assertEquals(expectedReplicas, partition.replicaIds.asScala.toSet, "Replica set should match")
   }
 
 }

@@ -35,6 +35,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -48,7 +49,9 @@ import static org.apache.kafka.common.utils.Utils.mkSet;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertFalse;
 
 public class StreamsMetadataStateTest {
 
@@ -198,9 +201,9 @@ public class StreamsMetadataStateTest {
             actualAsMap.get(hostThree).standbyStateStoreNames().contains("table-one"));
     }
 
-    @Test(expected = NullPointerException.class)
+    @Test
     public void shouldThrowIfStoreNameIsNullOnGetAllInstancesWithStore() {
-        metadataState.getAllMetadataForStore(null);
+        assertThrows(NullPointerException.class, () -> metadataState.getAllMetadataForStore(null));
     }
 
     @Test
@@ -238,7 +241,7 @@ public class StreamsMetadataStateTest {
                 "the-key",
                 partitioner);
         assertEquals(expected, actual);
-        assertEquals(1, actual.getPartition());
+        assertEquals(1, actual.partition());
     }
 
     @Test
@@ -272,25 +275,25 @@ public class StreamsMetadataStateTest {
         assertNull(actual);
     }
 
-    @Test(expected = NullPointerException.class)
+    @Test
     public void shouldThrowWhenKeyIsNull() {
-        metadataState.getKeyQueryMetadataForKey("table-three", null, Serdes.String().serializer());
+        assertThrows(NullPointerException.class, () -> metadataState.getKeyQueryMetadataForKey("table-three", null, Serdes.String().serializer()));
     }
 
-    @Test(expected = NullPointerException.class)
+    @Test
     public void shouldThrowWhenSerializerIsNull() {
-        metadataState.getKeyQueryMetadataForKey("table-three", "key", (Serializer<Object>) null);
+        assertThrows(NullPointerException.class, () -> metadataState.getKeyQueryMetadataForKey("table-three", "key", (Serializer<Object>) null));
     }
 
-    @Test(expected = NullPointerException.class)
+    @Test
     public void shouldThrowIfStoreNameIsNull() {
-        metadataState.getKeyQueryMetadataForKey(null, "key", Serdes.String().serializer());
+        assertThrows(NullPointerException.class, () -> metadataState.getKeyQueryMetadataForKey(null, "key", Serdes.String().serializer()));
     }
 
     @SuppressWarnings("unchecked")
-    @Test(expected = NullPointerException.class)
+    @Test
     public void shouldThrowIfStreamPartitionerIsNull() {
-        metadataState.getKeyQueryMetadataForKey(null, "key", (StreamPartitioner) null);
+        assertThrows(NullPointerException.class, () -> metadataState.getKeyQueryMetadataForKey(null, "key", (StreamPartitioner) null));
     }
 
     @Test
@@ -315,8 +318,8 @@ public class StreamsMetadataStateTest {
     @Test
     public void shouldGetQueryMetadataForGlobalStoreWithKey() {
         final KeyQueryMetadata metadata = metadataState.getKeyQueryMetadataForKey(globalTable, "key", Serdes.String().serializer());
-        assertEquals(hostOne, metadata.getActiveHost());
-        assertTrue(metadata.getStandbyHosts().isEmpty());
+        assertEquals(hostOne, metadata.activeHost());
+        assertTrue(metadata.standbyHosts().isEmpty());
     }
 
     @Test
@@ -329,8 +332,8 @@ public class StreamsMetadataStateTest {
     @Test
     public void shouldGetQueryMetadataForGlobalStoreWithKeyAndPartitioner() {
         final KeyQueryMetadata metadata = metadataState.getKeyQueryMetadataForKey(globalTable, "key", partitioner);
-        assertEquals(hostOne, metadata.getActiveHost());
-        assertTrue(metadata.getStandbyHosts().isEmpty());
+        assertEquals(hostOne, metadata.activeHost());
+        assertTrue(metadata.standbyHosts().isEmpty());
     }
 
     @Test
@@ -338,5 +341,29 @@ public class StreamsMetadataStateTest {
         final StreamsMetadataState streamsMetadataState = new StreamsMetadataState(TopologyWrapper.getInternalTopologyBuilder(builder.build()), StreamsMetadataState.UNKNOWN_HOST);
         streamsMetadataState.onChange(hostToActivePartitions, hostToStandbyPartitions, cluster);
         assertNotNull(streamsMetadataState.getKeyQueryMetadataForKey(globalTable, "key", partitioner));
+    }
+
+    @Test
+    public void shouldReturnAllMetadataThatRemainsValidAfterChange() {
+        final Collection<StreamsMetadata> allMetadata = metadataState.getAllMetadata();
+        final Collection<StreamsMetadata> copy = new ArrayList<>(allMetadata);
+        assertFalse("invalid test", allMetadata.isEmpty());
+        metadataState.onChange(Collections.emptyMap(), Collections.emptyMap(), cluster);
+        assertEquals("encapsulation broken", allMetadata, copy);
+    }
+
+    @Test
+    public void shouldNotReturnMutableReferenceToInternalAllMetadataCollection() {
+        final Collection<StreamsMetadata> allMetadata = metadataState.getAllMetadata();
+        assertFalse("invalid test", allMetadata.isEmpty());
+
+        try {
+            // Either this should not affect internal state of 'metadataState'
+            allMetadata.clear();
+        } catch (final UnsupportedOperationException e) {
+            // Or should fail.
+        }
+
+        assertFalse("encapsulation broken", metadataState.getAllMetadata().isEmpty());
     }
 }

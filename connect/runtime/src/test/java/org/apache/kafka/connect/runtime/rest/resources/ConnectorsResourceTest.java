@@ -76,6 +76,7 @@ import static org.apache.kafka.connect.runtime.WorkerConfig.TOPIC_TRACKING_ALLOW
 import static org.apache.kafka.connect.runtime.WorkerConfig.TOPIC_TRACKING_ENABLE_CONFIG;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 @RunWith(PowerMockRunner.class)
 @PrepareForTest(RestClient.class)
@@ -360,8 +361,8 @@ public class ConnectorsResourceTest {
         PowerMock.verifyAll();
     }
 
-    @Test(expected = AlreadyExistsException.class)
-    public void testCreateConnectorExists() throws Throwable {
+    @Test
+    public void testCreateConnectorExists() {
         CreateConnectorRequest body = new CreateConnectorRequest(CONNECTOR_NAME, Collections.singletonMap(ConnectorConfig.NAME_CONFIG, CONNECTOR_NAME));
 
         final Capture<Callback<Herder.Created<ConnectorInfo>>> cb = Capture.newInstance();
@@ -370,7 +371,7 @@ public class ConnectorsResourceTest {
 
         PowerMock.replayAll();
 
-        connectorsResource.createConnector(FORWARD, NULL_HEADERS, body);
+        assertThrows(AlreadyExistsException.class, () -> connectorsResource.createConnector(FORWARD, NULL_HEADERS, body));
 
         PowerMock.verifyAll();
     }
@@ -462,7 +463,7 @@ public class ConnectorsResourceTest {
     }
 
     // Not found exceptions should pass through to caller so they can be processed for 404s
-    @Test(expected = NotFoundException.class)
+    @Test
     public void testDeleteConnectorNotFound() throws Throwable {
         final Capture<Callback<Herder.Created<ConnectorInfo>>> cb = Capture.newInstance();
         herder.deleteConnectorConfig(EasyMock.eq(CONNECTOR_NAME), EasyMock.capture(cb));
@@ -470,7 +471,7 @@ public class ConnectorsResourceTest {
 
         PowerMock.replayAll();
 
-        connectorsResource.destroyConnector(CONNECTOR_NAME, NULL_HEADERS, FORWARD);
+        assertThrows(NotFoundException.class, () -> connectorsResource.destroyConnector(CONNECTOR_NAME, NULL_HEADERS, FORWARD));
 
         PowerMock.verifyAll();
     }
@@ -505,15 +506,15 @@ public class ConnectorsResourceTest {
         PowerMock.verifyAll();
     }
 
-    @Test(expected = NotFoundException.class)
-    public void testGetConnectorConfigConnectorNotFound() throws Throwable {
+    @Test
+    public void testGetConnectorConfigConnectorNotFound() {
         final Capture<Callback<Map<String, String>>> cb = Capture.newInstance();
         herder.connectorConfig(EasyMock.eq(CONNECTOR_NAME), EasyMock.capture(cb));
         expectAndCallbackException(cb, new NotFoundException("not found"));
 
         PowerMock.replayAll();
 
-        connectorsResource.getConnectorConfig(CONNECTOR_NAME, NULL_HEADERS, FORWARD);
+        assertThrows(NotFoundException.class, () -> connectorsResource.getConnectorConfig(CONNECTOR_NAME, NULL_HEADERS, FORWARD));
 
         PowerMock.verifyAll();
     }
@@ -602,19 +603,20 @@ public class ConnectorsResourceTest {
         PowerMock.verifyAll();
     }
 
-    @Test(expected = BadRequestException.class)
-    public void testPutConnectorConfigNameMismatch() throws Throwable {
+    @Test
+    public void testPutConnectorConfigNameMismatch() {
         Map<String, String> connConfig = new HashMap<>(CONNECTOR_CONFIG);
         connConfig.put(ConnectorConfig.NAME_CONFIG, "mismatched-name");
-        connectorsResource.putConnectorConfig(CONNECTOR_NAME, NULL_HEADERS, FORWARD, connConfig);
+        assertThrows(BadRequestException.class, () -> connectorsResource.putConnectorConfig(CONNECTOR_NAME,
+            NULL_HEADERS, FORWARD, connConfig));
     }
 
-    @Test(expected = BadRequestException.class)
-    public void testCreateConnectorConfigNameMismatch() throws Throwable {
+    @Test
+    public void testCreateConnectorConfigNameMismatch() {
         Map<String, String> connConfig = new HashMap<>();
         connConfig.put(ConnectorConfig.NAME_CONFIG, "mismatched-name");
         CreateConnectorRequest request = new CreateConnectorRequest(CONNECTOR_NAME, connConfig);
-        connectorsResource.createConnector(FORWARD, NULL_HEADERS, request);
+        assertThrows(BadRequestException.class, () -> connectorsResource.createConnector(FORWARD, NULL_HEADERS, request));
     }
 
     @Test
@@ -631,7 +633,7 @@ public class ConnectorsResourceTest {
         PowerMock.verifyAll();
     }
 
-    @Test(expected = NotFoundException.class)
+    @Test
     public void testGetConnectorTaskConfigsConnectorNotFound() throws Throwable {
         final Capture<Callback<List<TaskInfo>>> cb = Capture.newInstance();
         herder.taskConfigs(EasyMock.eq(CONNECTOR_NAME), EasyMock.capture(cb));
@@ -639,7 +641,7 @@ public class ConnectorsResourceTest {
 
         PowerMock.replayAll();
 
-        connectorsResource.getTaskConfigs(CONNECTOR_NAME, NULL_HEADERS, FORWARD);
+        assertThrows(NotFoundException.class, () -> connectorsResource.getTaskConfigs(CONNECTOR_NAME, NULL_HEADERS, FORWARD));
 
         PowerMock.verifyAll();
     }
@@ -701,7 +703,7 @@ public class ConnectorsResourceTest {
         );
     }
 
-    @Test(expected = NotFoundException.class)
+    @Test
     public void testPutConnectorTaskConfigsConnectorNotFound() throws Throwable {
         final Capture<Callback<Void>> cb = Capture.newInstance();
         herder.putTaskConfigs(
@@ -714,20 +716,21 @@ public class ConnectorsResourceTest {
 
         PowerMock.replayAll();
 
-        connectorsResource.putTaskConfigs(CONNECTOR_NAME, NULL_HEADERS, FORWARD, serializeAsBytes(TASK_CONFIGS));
+        assertThrows(NotFoundException.class, () -> connectorsResource.putTaskConfigs(CONNECTOR_NAME, NULL_HEADERS,
+            FORWARD, serializeAsBytes(TASK_CONFIGS)));
 
         PowerMock.verifyAll();
     }
 
-    @Test(expected = NotFoundException.class)
-    public void testRestartConnectorNotFound() throws Throwable {
+    @Test
+    public void testRestartConnectorNotFound() {
         final Capture<Callback<Void>> cb = Capture.newInstance();
         herder.restartConnector(EasyMock.eq(CONNECTOR_NAME), EasyMock.capture(cb));
         expectAndCallbackException(cb, new NotFoundException("not found"));
 
         PowerMock.replayAll();
 
-        connectorsResource.restartConnector(CONNECTOR_NAME, NULL_HEADERS, FORWARD);
+        assertThrows(NotFoundException.class, () -> connectorsResource.restartConnector(CONNECTOR_NAME, NULL_HEADERS, FORWARD));
 
         PowerMock.verifyAll();
     }
@@ -767,7 +770,7 @@ public class ConnectorsResourceTest {
         PowerMock.verifyAll();
     }
 
-    @Test(expected = NotFoundException.class)
+    @Test
     public void testRestartTaskNotFound() throws Throwable {
         ConnectorTaskId taskId = new ConnectorTaskId(CONNECTOR_NAME, 0);
         final Capture<Callback<Void>> cb = Capture.newInstance();
@@ -776,7 +779,7 @@ public class ConnectorsResourceTest {
 
         PowerMock.replayAll();
 
-        connectorsResource.restartTask(CONNECTOR_NAME, 0, NULL_HEADERS, FORWARD);
+        assertThrows(NotFoundException.class, () -> connectorsResource.restartTask(CONNECTOR_NAME, 0, NULL_HEADERS, FORWARD));
 
         PowerMock.verifyAll();
     }
@@ -904,6 +907,22 @@ public class ConnectorsResourceTest {
         PowerMock.verifyAll();
     }
 
+    @Test
+    public void testCompleteOrForwardWithErrorAndNoForwardUrl() throws Throwable {
+        final Capture<Callback<Herder.Created<ConnectorInfo>>> cb = Capture.newInstance();
+        herder.deleteConnectorConfig(EasyMock.eq(CONNECTOR_NAME), EasyMock.capture(cb));
+        String leaderUrl = null;
+        expectAndCallbackException(cb, new NotLeaderException("not leader", leaderUrl));
+
+        PowerMock.replayAll();
+
+        ConnectRestException e = assertThrows(ConnectRestException.class, () -> {
+            connectorsResource.destroyConnector(CONNECTOR_NAME, NULL_HEADERS, FORWARD);
+        });
+        assertTrue(e.getMessage().contains("no known leader URL"));
+        PowerMock.verifyAll();
+    }
+
     private <T> byte[] serializeAsBytes(final T value) throws IOException {
         return new ObjectMapper().writeValueAsBytes(value);
     }
@@ -919,12 +938,9 @@ public class ConnectorsResourceTest {
     }
 
     private  <T> void expectAndCallbackException(final Capture<Callback<T>> cb, final Throwable t) {
-        PowerMock.expectLastCall().andAnswer(new IAnswer<Void>() {
-            @Override
-            public Void answer() throws Throwable {
-                cb.getValue().onCompletion(t, null);
-                return null;
-            }
+        PowerMock.expectLastCall().andAnswer((IAnswer<Void>) () -> {
+            cb.getValue().onCompletion(t, null);
+            return null;
         });
     }
 

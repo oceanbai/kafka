@@ -18,24 +18,23 @@ package org.apache.kafka.clients.consumer;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.TimestampType;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
-import java.util.Collection;
+import java.util.Optional;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class MockConsumerTest {
     
-    private MockConsumer<String, String> consumer = new MockConsumer<>(OffsetResetStrategy.EARLIEST);
+    private final MockConsumer<String, String> consumer = new MockConsumer<>(OffsetResetStrategy.EARLIEST);
 
     @Test
     public void testSimpleMock() {
@@ -88,7 +87,8 @@ public class MockConsumerTest {
         assertEquals(2L, consumer.position(tp));
         consumer.commitSync();
         assertEquals(2L, consumer.committed(Collections.singleton(tp)).get(tp).offset());
-        assertNull(consumer.groupMetadata());
+        assertEquals(new ConsumerGroupMetadata("dummy.group.id", 1, "1", Optional.empty()),
+            consumer.groupMetadata());
     }
 
     @Test
@@ -99,8 +99,8 @@ public class MockConsumerTest {
         consumer.updateEndOffsets(Collections.singletonMap(partition, 1L));
         consumer.seekToEnd(Collections.singleton(partition));
         ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(1));
-        assertThat(records.count(), is(0));
-        assertThat(records.isEmpty(), is(true));
+        assertEquals(0, records.count());
+        assertTrue(records.isEmpty());
     }
 
     @Test
@@ -116,7 +116,22 @@ public class MockConsumerTest {
         consumer.poll(Duration.ofMillis(1));
         consumer.resume(testPartitionList);
         ConsumerRecords<String, String> recordsSecondPoll = consumer.poll(Duration.ofMillis(1));
-        assertThat(recordsSecondPoll.count(), is(1));
+        assertEquals(1, recordsSecondPoll.count());
+    }
+
+    @Test
+    public void endOffsetsShouldBeIdempotent() {
+        TopicPartition partition = new TopicPartition("test", 0);
+        consumer.updateEndOffsets(Collections.singletonMap(partition, 10L));
+        // consumer.endOffsets should NOT change the value of end offsets
+        assertEquals(10L, (long) consumer.endOffsets(Collections.singleton(partition)).get(partition));
+        assertEquals(10L, (long) consumer.endOffsets(Collections.singleton(partition)).get(partition));
+        assertEquals(10L, (long) consumer.endOffsets(Collections.singleton(partition)).get(partition));
+        consumer.updateEndOffsets(Collections.singletonMap(partition, 11L));
+        // consumer.endOffsets should NOT change the value of end offsets
+        assertEquals(11L, (long) consumer.endOffsets(Collections.singleton(partition)).get(partition));
+        assertEquals(11L, (long) consumer.endOffsets(Collections.singleton(partition)).get(partition));
+        assertEquals(11L, (long) consumer.endOffsets(Collections.singleton(partition)).get(partition));
     }
 
 }

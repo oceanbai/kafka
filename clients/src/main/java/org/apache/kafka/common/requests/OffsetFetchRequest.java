@@ -21,8 +21,8 @@ import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.message.OffsetFetchRequestData;
 import org.apache.kafka.common.message.OffsetFetchRequestData.OffsetFetchRequestTopic;
 import org.apache.kafka.common.protocol.ApiKeys;
+import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.protocol.types.Struct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,15 +38,17 @@ public class OffsetFetchRequest extends AbstractRequest {
     private static final Logger log = LoggerFactory.getLogger(OffsetFetchRequest.class);
 
     private static final List<OffsetFetchRequestTopic> ALL_TOPIC_PARTITIONS = null;
-    public final OffsetFetchRequestData data;
+    private final OffsetFetchRequestData data;
 
     public static class Builder extends AbstractRequest.Builder<OffsetFetchRequest> {
 
         public final OffsetFetchRequestData data;
+        private final boolean throwOnFetchStableOffsetsUnsupported;
 
         public Builder(String groupId,
                        boolean requireStable,
-                       List<TopicPartition> partitions) {
+                       List<TopicPartition> partitions,
+                       boolean throwOnFetchStableOffsetsUnsupported) {
             super(ApiKeys.OFFSET_FETCH);
 
             final List<OffsetFetchRequestTopic> topics;
@@ -69,6 +71,7 @@ public class OffsetFetchRequest extends AbstractRequest {
                             .setGroupId(groupId)
                             .setRequireStable(requireStable)
                             .setTopics(topics);
+            this.throwOnFetchStableOffsetsUnsupported = throwOnFetchStableOffsetsUnsupported;
         }
 
         boolean isAllTopicPartitions() {
@@ -83,11 +86,16 @@ public class OffsetFetchRequest extends AbstractRequest {
             }
 
             if (data.requireStable() && version < 7) {
-                log.trace("Fallback the requireStable flag to false as broker " +
-                             "only supports OffsetFetchRequest version {}. Need " +
-                             "v7 or newer to enable this feature", version);
+                if (throwOnFetchStableOffsetsUnsupported) {
+                    throw new UnsupportedVersionException("Broker unexpectedly " +
+                        "doesn't support requireStable flag on version " + version);
+                } else {
+                    log.trace("Fallback the requireStable flag to false as broker " +
+                                  "only supports OffsetFetchRequest version {}. Need " +
+                                  "v7 or newer to enable this feature", version);
 
-                return new OffsetFetchRequest(data.setRequireStable(false), version);
+                    return new OffsetFetchRequest(data.setRequireStable(false), version);
+                }
             }
 
             return new OffsetFetchRequest(data, version);
@@ -125,11 +133,6 @@ public class OffsetFetchRequest extends AbstractRequest {
         this.data = data;
     }
 
-    public OffsetFetchRequest(Struct struct, short version) {
-        super(ApiKeys.OFFSET_FETCH, version);
-        this.data = new OffsetFetchRequestData(struct, version);
-    }
-
     public OffsetFetchResponse getErrorResponse(Errors error) {
         return getErrorResponse(AbstractResponse.DEFAULT_THROTTLE_TIME, error);
     }
@@ -164,7 +167,7 @@ public class OffsetFetchRequest extends AbstractRequest {
     }
 
     public static OffsetFetchRequest parse(ByteBuffer buffer, short version) {
-        return new OffsetFetchRequest(ApiKeys.OFFSET_FETCH.parseRequest(version, buffer), version);
+        return new OffsetFetchRequest(new OffsetFetchRequestData(new ByteBufferAccessor(buffer), version), version);
     }
 
     public boolean isAllPartitions() {
@@ -172,7 +175,7 @@ public class OffsetFetchRequest extends AbstractRequest {
     }
 
     @Override
-    protected Struct toStruct() {
-        return data.toStruct(version());
+    public OffsetFetchRequestData data() {
+        return data;
     }
 }

@@ -140,7 +140,7 @@ public class SaslChannelBuilder implements ChannelBuilder, ListenerReconfigurabl
             }
 
             Class<? extends Login> defaultLoginClass = defaultLoginClass();
-            if (jaasContexts.containsKey(SaslConfigs.GSSAPI_MECHANISM)) {
+            if (mode == Mode.SERVER && jaasContexts.containsKey(SaslConfigs.GSSAPI_MECHANISM)) {
                 String defaultRealm;
                 try {
                     defaultRealm = defaultKerberosRealm();
@@ -236,6 +236,7 @@ public class SaslChannelBuilder implements ChannelBuilder, ListenerReconfigurabl
         loginManagers.clear();
         for (AuthenticateCallbackHandler handler : saslCallbackHandlers.values())
             handler.close();
+        if (sslFactory != null) sslFactory.close();
     }
 
     // Visible to override for testing
@@ -326,7 +327,7 @@ public class SaslChannelBuilder implements ChannelBuilder, ListenerReconfigurabl
         }
     }
 
-    private Class<? extends Login> defaultLoginClass() {
+    protected Class<? extends Login> defaultLoginClass() {
         if (jaasContexts.containsKey(SaslConfigs.GSSAPI_MECHANISM))
             return KerberosLogin.class;
         if (OAuthBearerLoginModule.OAUTHBEARER_MECHANISM.equals(clientSaslMechanism))
