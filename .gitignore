@@ -56,3 +56,4 @@ clients/src/generated-test
 jmh-benchmarks/generated
 streams/src/generated
 raft/
+/data/
