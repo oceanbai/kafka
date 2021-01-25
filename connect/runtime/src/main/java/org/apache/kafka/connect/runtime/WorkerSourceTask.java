@@ -29,6 +29,7 @@ import org.apache.kafka.common.metrics.stats.Max;
 import org.apache.kafka.common.metrics.stats.Rate;
 import org.apache.kafka.common.metrics.stats.Value;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.errors.RetriableException;
 import org.apache.kafka.connect.header.Header;
@@ -95,9 +96,7 @@ class WorkerSourceTask extends WorkerTask {
     private CountDownLatch stopRequestedLatch;
 
     private Map<String, String> taskConfig;
-    private boolean finishedStart = false;
-    private boolean startedShutdownBeforeStartCompleted = false;
-    private boolean stopped = false;
+    private boolean started = false;
 
     public WorkerSourceTask(ConnectorTaskId id,
                             SourceTask task,
@@ -155,8 +154,12 @@ class WorkerSourceTask extends WorkerTask {
 
     @Override
     protected void close() {
-        if (!shouldPause()) {
-            tryStop();
+        if (started) {
+            try {
+                task.stop();
+            } catch (Throwable t) {
+                log.warn("Could not stop task", t);
+            }
         }
         if (producer != null) {
             try {
@@ -170,11 +173,16 @@ class WorkerSourceTask extends WorkerTask {
         } catch (Throwable t) {
             log.warn("Could not close transformation chain", t);
         }
+        Utils.closeQuietly(retryWithToleranceOperator, "retry operator");
     }
 
     @Override
-    protected void releaseResources() {
-        sourceTaskMetricsGroup.close();
+    public void removeMetrics() {
+        try {
+            sourceTaskMetricsGroup.close();
+        } finally {
+            super.removeMetrics();
+        }
     }
 
     @Override
@@ -187,39 +195,21 @@ class WorkerSourceTask extends WorkerTask {
     public void stop() {
         super.stop();
         stopRequestedLatch.countDown();
-        synchronized (this) {
-            if (finishedStart)
-                tryStop();
-            else
-                startedShutdownBeforeStartCompleted = true;
-        }
-    }
-
-    private synchronized void tryStop() {
-        if (!stopped) {
-            try {
-                task.stop();
-                stopped = true;
-            } catch (Throwable t) {
-                log.warn("Could not stop task", t);
-            }
-        }
     }
 
     @Override
     public void execute() {
         try {
+            // If we try to start the task at all by invoking initialize, then count this as
+            // "started" and expect a subsequent call to the task's stop() method
+            // to properly clean up any resources allocated by its initialize() or 
+            // start() methods. If the task throws an exception during stop(),
+            // the worst thing that happens is another exception gets logged for an already-
+            // failed task
+            started = true;
             task.initialize(new WorkerSourceTaskContext(offsetReader, this, configState));
             task.start(taskConfig);
             log.info("{} Source task finished initialization and start", this);
-            synchronized (this) {
-                if (startedShutdownBeforeStartCompleted) {
-                    tryStop();
-                    return;
-                }
-                finishedStart = true;
-            }
-
             while (!isStopping()) {
                 if (shouldPause()) {
                     onPause();

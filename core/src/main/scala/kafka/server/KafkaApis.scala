@@ -800,7 +800,15 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
     }
 
-    val fetchMaxBytes = Math.min(fetchRequest.maxBytes, config.fetchMaxBytes)
+    // for fetch from consumer, cap fetchMaxBytes to the maximum bytes that could be fetched without being throttled given
+    // no bytes were recorded in the recent quota window
+    // trying to fetch more bytes would result in a guaranteed throttling potentially blocking consumer progress
+    val maxQuotaWindowBytes = if (fetchRequest.isFromFollower)
+      Int.MaxValue
+    else
+      quotas.fetch.getMaxValueInQuotaWindow(request.session, clientId).toInt
+
+    val fetchMaxBytes = Math.min(Math.min(fetchRequest.maxBytes, config.fetchMaxBytes), maxQuotaWindowBytes)
     val fetchMinBytes = Math.min(fetchRequest.minBytes, fetchMaxBytes)
     if (interesting.isEmpty)
       processResponseCallback(Seq.empty)
@@ -2953,10 +2961,9 @@ class KafkaApis(val requestChannel: RequestChannel,
     // if the controller hasn't been upgraded to use KIP-380
     if (brokerEpochInRequest == AbstractControlRequest.UNKNOWN_BROKER_EPOCH) false
     else {
-      val curBrokerEpoch = controller.brokerEpoch
-      if (brokerEpochInRequest < curBrokerEpoch) true
-      else if (brokerEpochInRequest == curBrokerEpoch) false
-      else throw new IllegalStateException(s"Epoch $brokerEpochInRequest larger than current broker epoch $curBrokerEpoch")
+      // brokerEpochInRequest > controller.brokerEpoch is possible in rare scenarios where the controller gets notified
+      // about the new broker epoch and sends a control request with this epoch before the broker learns about it
+      brokerEpochInRequest < controller.brokerEpoch
     }
   }
 

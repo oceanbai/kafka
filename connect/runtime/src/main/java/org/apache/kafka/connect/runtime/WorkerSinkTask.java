@@ -32,6 +32,8 @@ import org.apache.kafka.common.metrics.stats.Max;
 import org.apache.kafka.common.metrics.stats.Rate;
 import org.apache.kafka.common.metrics.stats.Value;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.common.utils.Utils.UncheckedCloseable;
 import org.apache.kafka.connect.data.SchemaAndValue;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.errors.RetriableException;
@@ -53,7 +55,6 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -92,6 +93,7 @@ class WorkerSinkTask extends WorkerTask {
     private int commitFailures;
     private boolean pausedForRedelivery;
     private boolean committing;
+    private boolean taskStopped;
 
     public WorkerSinkTask(ConnectorTaskId id,
                           SinkTask task,
@@ -134,6 +136,7 @@ class WorkerSinkTask extends WorkerTask {
         this.sinkTaskMetricsGroup.recordOffsetSequenceNumber(commitSeqno);
         this.consumer = consumer;
         this.isTopicTrackingEnabled = workerConfig.getBoolean(TOPIC_TRACKING_ENABLE_CONFIG);
+        this.taskStopped = false;
     }
 
     @Override
@@ -163,23 +166,23 @@ class WorkerSinkTask extends WorkerTask {
         } catch (Throwable t) {
             log.warn("Could not stop task", t);
         }
-        if (consumer != null) {
-            try {
-                consumer.close();
-            } catch (Throwable t) {
-                log.warn("Could not close consumer", t);
-            }
-        }
+        taskStopped = true;
+        Utils.closeQuietly(consumer, "consumer");
         try {
             transformationChain.close();
         } catch (Throwable t) {
             log.warn("Could not close transformation chain", t);
         }
+        Utils.closeQuietly(retryWithToleranceOperator, "retry operator");
     }
 
     @Override
-    protected void releaseResources() {
-        sinkTaskMetricsGroup.close();
+    public void removeMetrics() {
+        try {
+            sinkTaskMetricsGroup.close();
+        } finally {
+            super.removeMetrics();
+        }
     }
 
     @Override
@@ -191,13 +194,11 @@ class WorkerSinkTask extends WorkerTask {
     @Override
     public void execute() {
         initializeAndStart();
-        try {
+        // Make sure any uncommitted data has been committed and the task has
+        // a chance to clean up its state
+        try (UncheckedCloseable suppressible = this::closePartitions) {
             while (!isStopping())
                 iteration();
-        } finally {
-            // Make sure any uncommitted data has been committed and the task has
-            // a chance to clean up its state
-            closePartitions();
         }
     }
 
@@ -290,10 +291,9 @@ class WorkerSinkTask extends WorkerTask {
         SinkConnectorConfig.validate(taskConfig);
 
         if (SinkConnectorConfig.hasTopicsConfig(taskConfig)) {
-            String[] topics = taskConfig.get(SinkTask.TOPICS_CONFIG).split(",");
-            Arrays.setAll(topics, i -> topics[i].trim());
-            consumer.subscribe(Arrays.asList(topics), new HandleRebalance());
-            log.debug("{} Initializing and starting task for topics {}", this, topics);
+            List<String> topics = SinkConnectorConfig.parseTopicsList(taskConfig);
+            consumer.subscribe(topics, new HandleRebalance());
+            log.debug("{} Initializing and starting task for topics {}", this, Utils.join(topics, ", "));
         } else {
             String topicsRegexStr = taskConfig.get(SinkTask.TOPICS_REGEX_CONFIG);
             Pattern pattern = Pattern.compile(topicsRegexStr);
@@ -669,6 +669,10 @@ class WorkerSinkTask extends WorkerTask {
 
         @Override
         public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
+            if (taskStopped) {
+                log.trace("Skipping partition revocation callback as task has already been stopped");
+                return;
+            }
             log.debug("{} Partitions revoked", WorkerSinkTask.this);
             try {
                 closePartitions();

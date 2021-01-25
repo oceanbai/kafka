@@ -30,6 +30,19 @@
         <code>zookeeper.session.timeout.ms</code> has been increased from 6s to 18s and
         <code>replica.lag.time.max.ms</code> from 10s to 30s.</li>
     <li>New DSL operator <code>cogroup()</code> has been added for aggregating multiple streams together at once.</li>
+    <li>Added a new <code>KStream.toTable()</code> API to translate an input event stream into a KTable.</li>
+    <li>Added a new Serde type <code>Void</code> to represent null keys or null values from input topic.</li>
+    <li>Deprecated <code>UsePreviousTimeOnInvalidTimestamp</code> and replaced it with <code>UsePartitionTimeOnInvalidTimeStamp</code>.</li>
+    <li>Improved exactly-once semantics by adding a pending offset fencing mechanism and stronger transactional commit
+        consistency check, which greatly simplifies the implementation of a scalable exactly-once application.
+        We also added a new exactly-once semantics code example under
+        <a href="https://github.com/apache/kafka/tree/2.5/examples">examples</a> folder. Check out
+        <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-447%3A+Producer+scalability+for+exactly+once+semantics">KIP-447</a>
+        for the full details.</li>
+    <li>Added a new public api <code>KafkaStreams.queryMetadataForKey(String, K, Serializer) to get detailed information on the key being queried.
+        It provides information about the partition number where the key resides in addition to hosts containing the active and standby partitions for the key.</code></li>
+    <li>Provided support to query stale stores (for high availability) and the stores belonging to a specific partition by deprecating <code>KafkaStreams.store(String, QueryableStoreType)</code> and replacing it with <code>KafkaStreams.store(StoreQueryParameters)</code>.</li>
+    <li>Added a new public api to access lag information for stores local to an instance with <code>KafkaStreams.allLocalStorePartitionLags()</code>.</li>
     <li>Scala 2.11 is no longer supported. See
         <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-531%3A+Drop+support+for+Scala+2.11+in+Kafka+2.5">KIP-531</a>
         for details.</li>

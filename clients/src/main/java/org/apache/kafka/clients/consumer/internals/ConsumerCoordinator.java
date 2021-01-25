@@ -341,7 +341,17 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         if (assignor == null)
             throw new IllegalStateException("Coordinator selected invalid assignment protocol: " + assignmentStrategy);
 
+        // Give the assignor a chance to update internal state based on the received assignment
+        groupMetadata = new ConsumerGroupMetadata(rebalanceConfig.groupId, generation, memberId, rebalanceConfig.groupInstanceId);
+
         Set<TopicPartition> ownedPartitions = new HashSet<>(subscriptions.assignedPartitions());
+
+        // should at least encode the short version
+        if (assignmentBuffer.remaining() < 2)
+            throw new IllegalStateException("There is insufficient bytes available to read assignment from the sync-group response (" +
+                "actual byte size " + assignmentBuffer.remaining() + ") , this is not expected; " +
+                "it is possible that the leader's assign function is buggy and did not return any assignment for this member, " +
+                "or because static member is configured and the protocol is buggy hence did not get the assignment for this member");
 
         Assignment assignment = ConsumerProtocol.deserializeAssignment(assignmentBuffer);
 
@@ -392,11 +402,14 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         // were not explicitly requested, so we update the joined subscription here.
         maybeUpdateJoinedSubscription(assignedPartitions);
 
-        // give the assignor a chance to update internal state based on the received assignment
-        groupMetadata = new ConsumerGroupMetadata(rebalanceConfig.groupId, generation, memberId, rebalanceConfig.groupInstanceId);
-        assignor.onAssignment(assignment, groupMetadata);
+        // Catch any exception here to make sure we could complete the user callback.
+        try {
+            assignor.onAssignment(assignment, groupMetadata);
+        } catch (Exception e) {
+            firstException.compareAndSet(null, e);
+        }
 
-        // reschedule the auto commit starting from now
+        // Reschedule the auto commit starting from now
         if (autoCommitEnabled)
             this.nextAutoCommitTimer.updateAndReset(autoCommitIntervalMs);
 
@@ -423,18 +436,24 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         }
     }
 
+    // for testing
+    boolean poll(Timer timer) {
+        return poll(timer, true);
+    }
+
     /**
      * Poll for coordinator events. This ensures that the coordinator is known and that the consumer
      * has joined the group (if it is using group management). This also handles periodic offset commits
      * if they are enabled.
      * <p>
-     * Returns early if the timeout expires
+     * Returns early if the timeout expires or if waiting on rejoin is not required
      *
      * @param timer Timer bounding how long this method can block
+     * @param waitForJoinGroup Boolean flag indicating if we should wait until re-join group completes
      * @throws KafkaException if the rebalance callback throws an exception
      * @return true iff the operation succeeded
      */
-    public boolean poll(Timer timer) {
+    public boolean poll(Timer timer, boolean waitForJoinGroup) {
         maybeUpdateSubscriptionMetadata();
 
         invokeCompletedOffsetCommitCallbacks();
@@ -474,7 +493,8 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                     maybeUpdateSubscriptionMetadata();
                 }
 
-                if (!ensureActiveGroup(timer)) {
+                // if not wait for join group, we would just use a timer of 0
+                if (!ensureActiveGroup(waitForJoinGroup ? timer : time.timer(0L))) {
                     return false;
                 }
             }
@@ -733,11 +753,14 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
         // we need to rejoin if we performed the assignment and metadata has changed;
         // also for those owned-but-no-longer-existed partitions we should drop them as lost
-        if (assignmentSnapshot != null && !assignmentSnapshot.matches(metadataSnapshot))
+        if (assignmentSnapshot != null && !assignmentSnapshot.matches(metadataSnapshot)) {
+            requestRejoin();
             return true;
+        }
 
         // we need to join if our subscription has changed since the last join
         if (joinedSubscription != null && !joinedSubscription.equals(subscriptions.subscription())) {
+            requestRejoin();
             return true;
         }
 
@@ -751,9 +774,9 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * @return true iff the operation completed within the timeout
      */
     public boolean refreshCommittedOffsetsIfNeeded(Timer timer) {
-        final Set<TopicPartition> missingFetchPositions = subscriptions.missingFetchPositions();
+        final Set<TopicPartition> initializingPartitions = subscriptions.initializingPartitions();
 
-        final Map<TopicPartition, OffsetAndMetadata> offsets = fetchCommittedOffsets(missingFetchPositions, timer);
+        final Map<TopicPartition, OffsetAndMetadata> offsets = fetchCommittedOffsets(initializingPartitions, timer);
         if (offsets == null) return false;
 
         for (final Map.Entry<TopicPartition, OffsetAndMetadata> entry : offsets.entrySet()) {

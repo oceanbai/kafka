@@ -16,6 +16,8 @@
  */
 package org.apache.kafka.streams.integration;
 
+import org.apache.kafka.common.serialization.IntegerDeserializer;
+import org.apache.kafka.common.serialization.IntegerSerializer;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -24,12 +26,14 @@ import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.TestInputTopic;
 import org.apache.kafka.streams.TestOutputTopic;
+import org.apache.kafka.streams.Topology;
 import org.apache.kafka.streams.TopologyTestDriver;
 import org.apache.kafka.streams.kstream.Consumed;
 import org.apache.kafka.streams.kstream.KTable;
 import org.apache.kafka.streams.kstream.Materialized;
 import org.apache.kafka.streams.kstream.Produced;
 import org.apache.kafka.streams.state.KeyValueStore;
+import org.apache.kafka.streams.utils.UniqueTopicSerdeScope;
 import org.apache.kafka.test.TestUtils;
 import org.junit.Test;
 
@@ -38,24 +42,29 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 
+import static org.apache.kafka.common.utils.Utils.mkEntry;
+import static org.apache.kafka.common.utils.Utils.mkMap;
+import static org.apache.kafka.common.utils.Utils.mkProperties;
+import static org.apache.kafka.common.utils.Utils.mkSet;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 
 public class KTableKTableForeignKeyJoinDefaultSerdeTest {
+
     @Test
     public void shouldWorkWithDefaultSerdes() {
         final StreamsBuilder builder = new StreamsBuilder();
-        final KTable<String, String> aTable = builder.table("A");
-        final KTable<String, String> bTable = builder.table("B");
+        final KTable<Integer, String> aTable = builder.table("A");
+        final KTable<Integer, String> bTable = builder.table("B");
 
-        final KTable<String, String> fkJoinResult = aTable.join(
+        final KTable<Integer, String> fkJoinResult = aTable.join(
             bTable,
-            value -> value.split("-")[0],
+            value -> Integer.parseInt(value.split("-")[0]),
             (aVal, bVal) -> "(" + aVal + "," + bVal + ")",
             Materialized.as("asdf")
         );
 
-        final KTable<String, String> finalJoinResult = aTable.join(
+        final KTable<Integer, String> finalJoinResult = aTable.join(
             fkJoinResult,
             (aVal, fkJoinVal) -> "(" + aVal + "," + fkJoinVal + ")"
         );
@@ -68,17 +77,17 @@ public class KTableKTableForeignKeyJoinDefaultSerdeTest {
     @Test
     public void shouldWorkWithDefaultAndConsumedSerdes() {
         final StreamsBuilder builder = new StreamsBuilder();
-        final KTable<String, String> aTable = builder.table("A", Consumed.with(Serdes.String(), Serdes.String()));
-        final KTable<String, String> bTable = builder.table("B");
+        final KTable<Integer, String> aTable = builder.table("A", Consumed.with(Serdes.Integer(), Serdes.String()));
+        final KTable<Integer, String> bTable = builder.table("B");
 
-        final KTable<String, String> fkJoinResult = aTable.join(
+        final KTable<Integer, String> fkJoinResult = aTable.join(
             bTable,
-            value -> value.split("-")[0],
+            value -> Integer.parseInt(value.split("-")[0]),
             (aVal, bVal) -> "(" + aVal + "," + bVal + ")",
             Materialized.as("asdf")
         );
 
-        final KTable<String, String> finalJoinResult = aTable.join(
+        final KTable<Integer, String> finalJoinResult = aTable.join(
             fkJoinResult,
             (aVal, fkJoinVal) -> "(" + aVal + "," + fkJoinVal + ")"
         );
@@ -91,20 +100,19 @@ public class KTableKTableForeignKeyJoinDefaultSerdeTest {
     @Test
     public void shouldWorkWithDefaultAndJoinResultSerdes() {
         final StreamsBuilder builder = new StreamsBuilder();
-        final KTable<String, String> aTable = builder.table("A");
-        final KTable<String, String> bTable = builder.table("B");
+        final KTable<Integer, String> aTable = builder.table("A");
+        final KTable<Integer, String> bTable = builder.table("B");
 
-        final KTable<String, String> fkJoinResult = aTable.join(
+        final KTable<Integer, String> fkJoinResult = aTable.join(
             bTable,
-            value -> value.split("-")[0],
+            value -> Integer.parseInt(value.split("-")[0]),
             (aVal, bVal) -> "(" + aVal + "," + bVal + ")",
-            Materialized
-                .<String, String, KeyValueStore<Bytes, byte[]>>as("asdf")
-                .withKeySerde(Serdes.String())
-                .withValueSerde(Serdes.String())
+            Materialized.<Integer, String, KeyValueStore<Bytes, byte[]>>as("asdf")
+                    .withKeySerde(Serdes.Integer())
+                    .withValueSerde(Serdes.String())
         );
 
-        final KTable<String, String> finalJoinResult = aTable.join(
+        final KTable<Integer, String> finalJoinResult = aTable.join(
             fkJoinResult,
             (aVal, fkJoinVal) -> "(" + aVal + "," + fkJoinVal + ")"
         );
@@ -117,20 +125,20 @@ public class KTableKTableForeignKeyJoinDefaultSerdeTest {
     @Test
     public void shouldWorkWithDefaultAndEquiJoinResultSerdes() {
         final StreamsBuilder builder = new StreamsBuilder();
-        final KTable<String, String> aTable = builder.table("A");
-        final KTable<String, String> bTable = builder.table("B");
+        final KTable<Integer, String> aTable = builder.table("A");
+        final KTable<Integer, String> bTable = builder.table("B");
 
-        final KTable<String, String> fkJoinResult = aTable.join(
+        final KTable<Integer, String> fkJoinResult = aTable.join(
             bTable,
-            value -> value.split("-")[0],
+            value -> Integer.parseInt(value.split("-")[0]),
             (aVal, bVal) -> "(" + aVal + "," + bVal + ")",
             Materialized.as("asdf")
         );
 
-        final KTable<String, String> finalJoinResult = aTable.join(
+        final KTable<Integer, String> finalJoinResult = aTable.join(
             fkJoinResult,
             (aVal, fkJoinVal) -> "(" + aVal + "," + fkJoinVal + ")",
-            Materialized.with(Serdes.String(), Serdes.String())
+            Materialized.with(Serdes.Integer(), Serdes.String())
         );
 
         finalJoinResult.toStream().to("output");
@@ -141,41 +149,106 @@ public class KTableKTableForeignKeyJoinDefaultSerdeTest {
     @Test
     public void shouldWorkWithDefaultAndProducedSerdes() {
         final StreamsBuilder builder = new StreamsBuilder();
-        final KTable<String, String> aTable = builder.table("A");
-        final KTable<String, String> bTable = builder.table("B");
+        final KTable<Integer, String> aTable = builder.table("A");
+        final KTable<Integer, String> bTable = builder.table("B");
 
-        final KTable<String, String> fkJoinResult = aTable.join(
+        final KTable<Integer, String> fkJoinResult = aTable.join(
             bTable,
-            value -> value.split("-")[0],
+            value -> Integer.parseInt(value.split("-")[0]),
             (aVal, bVal) -> "(" + aVal + "," + bVal + ")",
             Materialized.as("asdf")
         );
 
-        final KTable<String, String> finalJoinResult = aTable.join(
+        final KTable<Integer, String> finalJoinResult = aTable.join(
             fkJoinResult,
             (aVal, fkJoinVal) -> "(" + aVal + "," + fkJoinVal + ")"
         );
 
-        finalJoinResult.toStream().to("output", Produced.with(Serdes.String(), Serdes.String()));
+        finalJoinResult.toStream().to("output", Produced.with(Serdes.Integer(), Serdes.String()));
 
         validateTopologyCanProcessData(builder);
     }
 
-    private static void validateTopologyCanProcessData(final StreamsBuilder builder) {
+    @Test
+    public void shouldUseExpectedTopicsWithSerde() {
+        final String applicationId = "ktable-ktable-joinOnForeignKey";
+        final Properties streamsConfig = mkProperties(mkMap(
+            mkEntry(StreamsConfig.APPLICATION_ID_CONFIG, applicationId),
+            mkEntry(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "asdf:0000"),
+            mkEntry(StreamsConfig.STATE_DIR_CONFIG, TestUtils.tempDirectory().getPath())
+        ));
+
+        final UniqueTopicSerdeScope serdeScope = new UniqueTopicSerdeScope();
+        final StreamsBuilder builder = new StreamsBuilder();
+
+        final String leftTable = "left_table";
+        final String rightTable = "right_table";
+        final String output = "output-topic";
+
+        final KTable<Integer, String> left = builder.table(
+            leftTable,
+            Consumed.with(serdeScope.decorateSerde(Serdes.Integer(), streamsConfig, true),
+                        serdeScope.decorateSerde(Serdes.String(), streamsConfig, false))
+        );
+        final KTable<Integer, String> right = builder.table(
+                rightTable,
+                Consumed.with(serdeScope.decorateSerde(Serdes.Integer(), streamsConfig, true),
+                              serdeScope.decorateSerde(Serdes.String(), streamsConfig, false))
+        );
+
+        left.join(
+            right,
+            value -> Integer.parseInt(value.split("\\|")[1]),
+            (value1, value2) -> "(" + value1 + "," + value2 + ")",
+            Materialized.with(null, serdeScope.decorateSerde(Serdes.String(), streamsConfig, false)
+            ))
+            .toStream()
+            .to(output);
+
+
+        final Topology topology = builder.build(streamsConfig);
+        try (final TopologyTestDriver driver = new TopologyTestDriver(topology, streamsConfig)) {
+            final TestInputTopic<Integer, String> leftInput = driver.createInputTopic(leftTable, new IntegerSerializer(), new StringSerializer());
+            final TestInputTopic<Integer, String> rightInput = driver.createInputTopic(rightTable, new IntegerSerializer(), new StringSerializer());
+            leftInput.pipeInput(2, "lhsValue1|1");
+            rightInput.pipeInput(1, "rhsValue1");
+        }
+        // verifying primarily that no extra pseudo-topics were used, but it's nice to also verify the rest of the
+        // topics our serdes serialize data for
+        assertThat(serdeScope.registeredTopics(), is(mkSet(
+            // expected pseudo-topics
+            applicationId + "-KTABLE-FK-JOIN-SUBSCRIPTION-REGISTRATION-0000000006-topic-fk--key",
+            applicationId + "-KTABLE-FK-JOIN-SUBSCRIPTION-REGISTRATION-0000000006-topic-pk--key",
+            applicationId + "-KTABLE-FK-JOIN-SUBSCRIPTION-REGISTRATION-0000000006-topic-vh--value",
+            // internal topics
+            applicationId + "-KTABLE-FK-JOIN-SUBSCRIPTION-REGISTRATION-0000000006-topic--key",
+            applicationId + "-KTABLE-FK-JOIN-SUBSCRIPTION-RESPONSE-0000000014-topic--key",
+            applicationId + "-KTABLE-FK-JOIN-SUBSCRIPTION-RESPONSE-0000000014-topic--value",
+            applicationId + "-left_table-STATE-STORE-0000000000-changelog--key",
+            applicationId + "-left_table-STATE-STORE-0000000000-changelog--value",
+            applicationId + "-right_table-STATE-STORE-0000000003-changelog--key",
+            applicationId + "-right_table-STATE-STORE-0000000003-changelog--value",
+            // output topics
+            "output-topic--key",
+            "output-topic--value"
+        )));
+    }
+
+    private void validateTopologyCanProcessData(final StreamsBuilder builder) {
         final Properties config = new Properties();
         config.setProperty(StreamsConfig.APPLICATION_ID_CONFIG, "dummy-" + UUID.randomUUID());
         config.setProperty(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "dummy");
-        config.setProperty(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.StringSerde.class.getName());
+        config.setProperty(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.IntegerSerde.class.getName());
         config.setProperty(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.StringSerde.class.getName());
         config.setProperty(StreamsConfig.STATE_DIR_CONFIG, TestUtils.tempDirectory().getAbsolutePath());
         try (final TopologyTestDriver topologyTestDriver = new TopologyTestDriver(builder.build(), config)) {
-            final TestInputTopic<String, String> aTopic = topologyTestDriver.createInputTopic("A", new StringSerializer(), new StringSerializer());
-            final TestInputTopic<String, String> bTopic = topologyTestDriver.createInputTopic("B", new StringSerializer(), new StringSerializer());
-            final TestOutputTopic<String, String> output = topologyTestDriver.createOutputTopic("output", new StringDeserializer(), new StringDeserializer());
-            aTopic.pipeInput("a1", "b1-alpha");
-            bTopic.pipeInput("b1", "beta");
-            final Map<String, String> x = output.readKeyValuesToMap();
-            assertThat(x, is(Collections.singletonMap("a1", "(b1-alpha,(b1-alpha,beta))")));
+            final TestInputTopic<Integer, String> aTopic = topologyTestDriver.createInputTopic("A", new IntegerSerializer(), new StringSerializer());
+            final TestInputTopic<Integer, String> bTopic = topologyTestDriver.createInputTopic("B", new IntegerSerializer(), new StringSerializer());
+            final TestOutputTopic<Integer, String> output = topologyTestDriver.createOutputTopic("output", new IntegerDeserializer(), new StringDeserializer());
+            aTopic.pipeInput(1, "999-alpha");
+            bTopic.pipeInput(999, "beta");
+            final Map<Integer, String> x = output.readKeyValuesToMap();
+            assertThat(x, is(Collections.singletonMap(1, "(999-alpha,(999-alpha,beta))")));
         }
     }
 }

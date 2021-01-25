@@ -30,6 +30,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
@@ -274,6 +275,37 @@ public final class Utils {
             buffer.position(pos);
         }
         return dest;
+    }
+
+    /**
+     * Starting from the current position, read an integer indicating the size of the byte array to read,
+     * then read the array. Consumes the buffer: upon returning, the buffer's position is after the array
+     * that is returned.
+     * @param buffer The buffer to read a size-prefixed array from
+     * @return The array
+     */
+    public static byte[] getNullableSizePrefixedArray(final ByteBuffer buffer) {
+        final int size = buffer.getInt();
+        return getNullableArray(buffer, size);
+    }
+
+    /**
+     * Read a byte array of the given size. Consumes the buffer: upon returning, the buffer's position
+     * is after the array that is returned.
+     * @param buffer The buffer to read a size-prefixed array from
+     * @param size The number of bytes to read out of the buffer
+     * @return The array
+     */
+    public static byte[] getNullableArray(final ByteBuffer buffer, final int size) {
+        if (size > buffer.remaining()) {
+            // preemptively throw this when the read is doomed to fail, so we don't have to allocate the array.
+            throw new BufferUnderflowException();
+        }
+        final byte[] oldBytes = size == -1 ? null : new byte[size];
+        if (oldBytes != null) {
+            buffer.get(oldBytes);
+        }
+        return oldBytes;
     }
 
     /**
@@ -736,29 +768,56 @@ public final class Utils {
     /**
      * Recursively delete the given file/directory and any subfiles (if any exist)
      *
-     * @param file The root file at which to begin deleting
+     * @param rootFile The root file at which to begin deleting
      */
-    public static void delete(final File file) throws IOException {
-        if (file == null)
+    public static void delete(final File rootFile) throws IOException {
+        delete(rootFile, Collections.emptyList());
+    }
+
+    /**
+     * Recursively delete the subfiles (if any exist) of the passed in root file that are not included
+     * in the list to keep
+     *
+     * @param rootFile The root file at which to begin deleting
+     * @param filesToKeep The subfiles to keep (note that if a subfile is to be kept, so are all its parent
+     *                    files in its pat)h; if empty we would also delete the root file
+     */
+    public static void delete(final File rootFile, final List<File> filesToKeep) throws IOException {
+        if (rootFile == null)
             return;
-        Files.walkFileTree(file.toPath(), new SimpleFileVisitor<Path>() {
+        Files.walkFileTree(rootFile.toPath(), new SimpleFileVisitor<Path>() {
             @Override
             public FileVisitResult visitFileFailed(Path path, IOException exc) throws IOException {
                 // If the root path did not exist, ignore the error; otherwise throw it.
-                if (exc instanceof NoSuchFileException && path.toFile().equals(file))
+                if (exc instanceof NoSuchFileException && path.toFile().equals(rootFile))
                     return FileVisitResult.TERMINATE;
                 throw exc;
             }
 
             @Override
             public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) throws IOException {
-                Files.delete(path);
+                if (!filesToKeep.contains(path.toFile())) {
+                    Files.delete(path);
+                }
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
             public FileVisitResult postVisitDirectory(Path path, IOException exc) throws IOException {
-                Files.delete(path);
+                // KAFKA-8999: if there's an exception thrown previously already, we should throw it
+                if (exc != null) {
+                    throw exc;
+                }
+
+                if (rootFile.toPath().equals(path)) {
+                    // only delete the parent directory if there's nothing to keep
+                    if (filesToKeep.isEmpty()) {
+                        Files.delete(path);
+                    }
+                } else if (!filesToKeep.contains(path.toFile())) {
+                    Files.delete(path);
+                }
+
                 return FileVisitResult.CONTINUE;
             }
         });
@@ -835,6 +894,18 @@ public final class Utils {
         }
         if (exception != null)
             throw exception;
+    }
+
+    /**
+     * An {@link AutoCloseable} interface without a throws clause in the signature
+     *
+     * This is used with lambda expressions in try-with-resources clauses
+     * to avoid casting un-checked exceptions to checked exceptions unnecessarily.
+     */
+    @FunctionalInterface
+    public interface UncheckedCloseable extends AutoCloseable {
+        @Override
+        void close();
     }
 
     /**

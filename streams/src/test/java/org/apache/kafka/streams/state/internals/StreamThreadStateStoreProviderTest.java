@@ -284,6 +284,44 @@ public class StreamThreadStateStoreProviderTest {
     }
 
     @Test
+    public void shouldReturnSingleStoreForPartition() {
+        mockThread(true);
+        {
+            final List<ReadOnlyKeyValueStore<String, String>> kvStores =
+                provider.stores(
+                    StoreQueryParameters
+                        .fromNameAndType("kv-store", QueryableStoreTypes.keyValueStore())
+                        .withPartition(0));
+            assertEquals(1, kvStores.size());
+            for (final ReadOnlyKeyValueStore<String, String> store : kvStores) {
+                assertThat(store, instanceOf(ReadOnlyKeyValueStore.class));
+                assertThat(store, not(instanceOf(TimestampedKeyValueStore.class)));
+            }
+        }
+        {
+            final List<ReadOnlyKeyValueStore<String, String>> kvStores =
+                provider.stores(
+                    StoreQueryParameters
+                        .fromNameAndType("kv-store", QueryableStoreTypes.keyValueStore())
+                        .withPartition(1));
+            assertEquals(1, kvStores.size());
+            for (final ReadOnlyKeyValueStore<String, String> store : kvStores) {
+                assertThat(store, instanceOf(ReadOnlyKeyValueStore.class));
+                assertThat(store, not(instanceOf(TimestampedKeyValueStore.class)));
+            }
+        }
+    }
+
+    @Test
+    public void shouldReturnEmptyListForInvalidPartitions() {
+        mockThread(true);
+        assertEquals(
+                Collections.emptyList(),
+                provider.stores(StoreQueryParameters.fromNameAndType("kv-store", QueryableStoreTypes.keyValueStore()).withPartition(2))
+        );
+    }
+
+    @Test
     public void shouldReturnEmptyListIfStoreExistsButIsNotOfTypeValueStore() {
         mockThread(true);
         assertEquals(
