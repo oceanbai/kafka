@@ -738,6 +738,7 @@ project(':core') {
 
   dependencies {
     compile project(':clients')
+    compile "org.slf4j:slf4j-simple:1.6.1"
     compile libs.jacksonDatabind
     compile libs.jacksonModuleScala
     compile libs.jacksonDataformatCsv

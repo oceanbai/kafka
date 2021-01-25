@@ -56,4 +56,6 @@ clients/src/generated-test
 jmh-benchmarks/generated
 streams/src/generated
 raft/
-/data/
+data/
+log/
+/config/gradle/wrapper/gradle-wrapper.jar
