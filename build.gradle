@@ -444,26 +444,21 @@ subprojects {
     }
   }
 
-  plugins.withType(ScalaPlugin) {
-
-    scala {
-      zincVersion = versions.zinc
-    }
-
-    task scaladocJar(type:Jar) {
-      classifier = 'scaladoc'
-      from "$rootDir/LICENSE"
-      from "$rootDir/NOTICE"
-      from scaladoc.destinationDir
-    }
-
-    //documentation task should also trigger building scala doc jar
-    docsJar.dependsOn scaladocJar
-
-    artifacts {
-      archives scaladocJar
-    }
-  }
+//  plugins.withType(ScalaPlugin) {
+//    task scaladocJar(type:Jar) {
+//      classifier = 'scaladoc'
+//      from "$rootDir/LICENSE"
+//      from "$rootDir/NOTICE"
+//      from scaladoc.destinationDir
+//    }
+//
+//    //documentation task should also trigger building scala doc jar
+//    docsJar.dependsOn scaladocJar
+//
+//    artifacts {
+//      archives scaladocJar
+//    }
+//  }
 
   tasks.withType(ScalaCompile) {
     scalaCompileOptions.additionalParameters = [
@@ -705,6 +700,7 @@ project(':core') {
 
   dependencies {
     compile project(':clients')
+    compile "org.slf4j:slf4j-simple:1.6.1"
     compile libs.jacksonDatabind
     compile libs.jacksonModuleScala
     compile libs.jacksonDataformatCsv
@@ -1287,7 +1283,6 @@ project(':streams:streams-scala') {
     compile project(':streams')
 
     compile libs.scalaLibrary
-    compile libs.scalaCollectionCompat
 
     testCompile project(':core')
     testCompile project(':core').sourceSets.test.output

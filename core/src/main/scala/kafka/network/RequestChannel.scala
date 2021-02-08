@@ -75,6 +75,15 @@ object RequestChannel extends Logging {
     }
   }
 
+  /**
+   *
+   * @param processor processor是Processor线程的序号，即这个请求是由哪个Processor线程接收处理的
+   * @param context context是用来标识请求上下文信息的
+   * @param startTimeNanos startTimeNanos记录了Request对象被创建的时间，主要用于各种时间统计指标的计算。
+   * @param memoryPool memoryPool表示源码定义的一个非阻塞式的内存缓冲区，主要作用是避免Request对象无限使用内存。
+   * @param buffer buffer是真正保存Request对象内容的字节缓冲区
+   * @param metrics metrics是Request相关的各种监控指标的一个管理类
+   */
   class Request(val processor: Int,
                 val context: RequestContext,
                 val startTimeNanos: Long,
@@ -326,15 +335,17 @@ class RequestChannel(val queueSize: Int, val metricNamePrefix : String, time: Ti
   })
 
   def addProcessor(processor: Processor): Unit = {
+    // 添加Processor到Processor线程池
     if (processors.putIfAbsent(processor.id, processor) != null)
       warn(s"Unexpected processor with processorId ${processor.id}")
 
     newGauge(responseQueueSizeMetricName, () => processor.responseQueueSize,
+      // 为给定Processor对象创建对应的监控指标
       Map(ProcessorMetricTag -> processor.id.toString))
   }
 
   def removeProcessor(processorId: Int): Unit = {
-    processors.remove(processorId)
+    processors.remove(processorId) // 从Processor线程池中移除给定Processor线程
     removeMetric(responseQueueSizeMetricName, Map(ProcessorMetricTag -> processorId.toString))
   }
 
@@ -343,10 +354,12 @@ class RequestChannel(val queueSize: Int, val metricNamePrefix : String, time: Ti
     requestQueue.put(request)
   }
 
-  /** Send a response back to the socket server to be sent over the network */
+  /** Send a response back to the socket server to be sent over the network
+   * 第5步：KafkaRequestHandler线程将Response放入Processor线程的Response队列
+   * */
   def sendResponse(response: RequestChannel.Response): Unit = {
 
-    if (isTraceEnabled) {
+    if (isTraceEnabled) { // 构造Trace日志输出字符串
       val requestHeader = response.request.header
       val message = response match {
         case sendResponse: SendResponse =>
@@ -375,9 +388,11 @@ class RequestChannel(val queueSize: Int, val metricNamePrefix : String, time: Ti
       case _: StartThrottlingResponse | _: EndThrottlingResponse => ()
     }
 
+    // 找出response对应的Processor线程，即request当初是由哪个Processor线程处理的
     val processor = processors.get(response.processor)
     // The processor may be null if it was shutdown. In this case, the connections
     // are closed, so the response is dropped.
+    // 将response对象放置到对应Processor线程的Response队列中
     if (processor != null) {
       processor.enqueueResponse(response)
     }

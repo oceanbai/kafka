@@ -92,19 +92,19 @@ import kafka.coordinator.group.GroupOverview
 /**
  * Logic to handle the various Kafka requests
  */
-class KafkaApis(val requestChannel: RequestChannel,
-                val replicaManager: ReplicaManager,
-                val adminManager: AdminManager,
-                val groupCoordinator: GroupCoordinator,
-                val txnCoordinator: TransactionCoordinator,
-                val controller: KafkaController,
-                val zkClient: KafkaZkClient,
-                val brokerId: Int,
-                val config: KafkaConfig,
-                val metadataCache: MetadataCache,
+class KafkaApis(val requestChannel: RequestChannel, // 请求通道
+                val replicaManager: ReplicaManager, // 副本管理器
+                val adminManager: AdminManager, // 主题、分区、配置等方面的管理器
+                val groupCoordinator: GroupCoordinator, // 消费者组协调器组件
+                val txnCoordinator: TransactionCoordinator, // 事务管理器组件
+                val controller: KafkaController, // 控制器组件
+                val zkClient: KafkaZkClient, // ZooKeeper客户端程序，Kafka依赖于该类实现与ZooKeeper交互
+                val brokerId: Int, // broker.id参数值
+                val config: KafkaConfig, // Kafka配置类
+                val metadataCache: MetadataCache, // 元数据缓存类
                 val metrics: Metrics,
                 val authorizer: Option[Authorizer],
-                val quotas: QuotaManagers,
+                val quotas: QuotaManagers, // 配额管理器组件
                 val fetchManager: FetchManager,
                 brokerTopicStats: BrokerTopicStats,
                 val clusterId: String,
@@ -128,6 +128,12 @@ class KafkaApis(val requestChannel: RequestChannel,
     try {
       trace(s"Handling request:${request.requestDesc(true)} from connection ${request.context.connectionId};" +
         s"securityProtocol:${request.context.securityProtocol},principal:${request.context.principal}")
+      // 根据请求头部信息中的apiKey字段判断属于哪类请求
+      // 然后调用响应的handle***方法
+      // 如果新增RPC协议类型，则：
+      // 1. 添加新的apiKey标识新请求类型
+      // 2. 添加新的case分支
+      // 3. 添加对应的handle***方法
       request.header.apiKey match {
         case ApiKeys.PRODUCE => handleProduceRequest(request)
         case ApiKeys.FETCH => handleFetchRequest(request)
@@ -181,10 +187,13 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.ALTER_CLIENT_QUOTAS => handleAlterClientQuotasRequest(request)
       }
     } catch {
+      // 如果是严重错误，则抛出异常
       case e: FatalExitError => throw e
+      // 普通异常的话，记录下错误日志
       case e: Throwable => handleError(request, e)
     } finally {
       // The local completion time may be set while processing the request. Only record it if it's unset.
+      // 记录一下请求本地完成时间，即Broker处理完该请求的时间
       if (request.apiLocalCompleteTimeNanos < 0)
         request.apiLocalCompleteTimeNanos = time.nanoseconds
     }
@@ -1399,7 +1408,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     val states = if (listGroupsRequest.data.statesFilter == null)
       // Handle a null array the same as empty
       immutable.Set[String]()
-    else 
+    else
       listGroupsRequest.data.statesFilter.asScala.toSet
 
     def createResponse(throttleMs: Int, groups: List[GroupOverview], error: Errors): AbstractResponse = {
@@ -1416,11 +1425,14 @@ class KafkaApis(val requestChannel: RequestChannel,
         )
     }
     val (error, groups) = groupCoordinator.handleListGroups(states)
+    // 如果Clients具备CLUSTER资源的DESCRIBE权限
     if (authorize(request.context, DESCRIBE, CLUSTER, CLUSTER_NAME))
       // With describe cluster access all groups are returned. We keep this alternative for backward compatibility.
+    // 直接使用刚才拿到的Group数据封装进Response然后发送
       sendResponseMaybeThrottle(request, requestThrottleMs =>
         createResponse(requestThrottleMs, groups, error))
     else {
+      // 找出Clients对哪些Group有GROUP资源的DESCRIBE权限，返回这些Group信息
       val filteredGroups = groups.filter(group => authorize(request.context, DESCRIBE, GROUP, group.groupId))
       sendResponseMaybeThrottle(request, requestThrottleMs =>
         createResponse(requestThrottleMs, filteredGroups, error))
@@ -1669,6 +1681,12 @@ class KafkaApis(val requestChannel: RequestChannel,
     sendResponseMaybeThrottle(request, createResponseCallback)
   }
 
+  /**
+   * 创建主题的代码
+   * 这段代码调用authorize方法，来判断Clients方法是否具有创建主题的权限，
+   * 如果没有，则显式标记TOPIC_AUTHORIZATION_FAILED，告知Clients端。
+   * 目前，Kafka所有的权限控制均发生在KafkaApis中，即所有请求在处理前，都需要调用authorize方法做权限校验，以保证请求能够被继续执行。
+   */
   def handleCreateTopicsRequest(request: RequestChannel.Request): Unit = {
     def sendResponseCallback(results: CreatableTopicResultCollection): Unit = {
       def createResponse(requestThrottleMs: Int): AbstractResponse = {
@@ -1695,12 +1713,15 @@ class KafkaApis(val requestChannel: RequestChannel,
       createTopicsRequest.data.topics.forEach { topic =>
         results.add(new CreatableTopicResult().setName(topic.name))
       }
+      // 是否具有CLUSTER资源的CREATE权限
       val hasClusterAuthorization = authorize(request.context, CREATE, CLUSTER, CLUSTER_NAME,
         logIfDenied = false)
       val topics = createTopicsRequest.data.topics.asScala.map(_.name)
+      // 如果具有CLUSTER CREATE权限，则允许主题创建，否则，还要查看是否具有TOPIC资源的CREATE权限
       val authorizedTopics =
         if (hasClusterAuthorization) topics.toSet
         else filterByAuthorized(request.context, CREATE, TOPIC, topics)(identity)
+      // 是否具有TOPIC资源的DESCRIBE_CONFIGS权限
       val authorizedForDescribeConfigs = filterByAuthorized(request.context, DESCRIBE_CONFIGS, TOPIC,
         topics, logIfDenied = false)(identity).map(name => name -> results.find(name)).toMap
 
@@ -1708,11 +1729,11 @@ class KafkaApis(val requestChannel: RequestChannel,
         if (results.findAll(topic.name).size > 1) {
           topic.setErrorCode(Errors.INVALID_REQUEST.code)
           topic.setErrorMessage("Found multiple entries for this topic.")
-        } else if (!authorizedTopics.contains(topic.name)) {
+        } else if (!authorizedTopics.contains(topic.name)) { // 如果不具备CLUSTER资源的CREATE权限或TOPIC资源的CREATE权限，认证失败！
           topic.setErrorCode(Errors.TOPIC_AUTHORIZATION_FAILED.code)
           topic.setErrorMessage("Authorization failed.")
         }
-        if (!authorizedForDescribeConfigs.contains(topic.name)) {
+        if (!authorizedForDescribeConfigs.contains(topic.name)) { // 如果不具备TOPIC资源的DESCRIBE_CONFIGS权限，设置主题配置错误码
           topic.setTopicConfigErrorCode(Errors.TOPIC_AUTHORIZATION_FAILED.code)
         }
       })
@@ -2914,6 +2935,9 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   // private package for testing
+  /**
+   * 这个方法是做授权检验的。目前，Kafka所有的RPC请求都要求发送者（无论是Clients，还是其他Broker）必须具备特定的权限。
+   */
   private[server] def authorize(requestContext: RequestContext,
                                 operation: AclOperation,
                                 resourceType: ResourceType,
@@ -2922,8 +2946,11 @@ class KafkaApis(val requestChannel: RequestChannel,
                                 logIfDenied: Boolean = true,
                                 refCount: Int = 1): Boolean = {
     authorizer.forall { authZ =>
+      // 获取待鉴权的资源类型
+      // 常见的资源类型如TOPIC、GROUP、CLUSTER等
       val resource = new ResourcePattern(resourceType, resourceName, PatternType.LITERAL)
       val actions = Collections.singletonList(new Action(operation, resource, refCount, logIfAllowed, logIfDenied))
+      // 返回鉴权结果，是ALLOWED还是DENIED
       authZ.authorize(requestContext, actions).get(0) == AuthorizationResult.ALLOWED
     }
   }

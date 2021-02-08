@@ -294,7 +294,10 @@ class LogSegment private[log] (val log: FileRecords,
            minOneMessage: Boolean = false): FetchDataInfo = {
     if (maxSize < 0)
       throw new IllegalArgumentException(s"Invalid max size $maxSize for log read from segment $log")
-
+    /*
+     调用 translateOffset 方法定位要读取的起始文件位置 （startPosition）。
+     输入参数 startOffset 仅仅是位移值，Kafka 需要根据索引信息找到对应的物理文件位置才能开始读取消息。
+     */
     val startOffsetAndSize = translateOffset(startOffset)
 
     // if the start position is already off the end of the log, return null
@@ -315,6 +318,9 @@ class LogSegment private[log] (val log: FileRecords,
     // calculate the length of the message set to read based on whether or not they gave us a maxOffset
     val fetchSize: Int = min((maxPosition - startPosition).toInt, adjustedMaxSize)
 
+    /*
+      最后一步是调用 FileRecords 的 slice 方法，从指定位置读取指定大小的消息集合。
+     */
     FetchDataInfo(offsetMetadata, log.slice(startPosition, fetchSize),
       firstEntryIncomplete = adjustedMaxSize < startOffsetAndSize.size)
   }
@@ -334,6 +340,7 @@ class LogSegment private[log] (val log: FileRecords,
    */
   @nonthreadsafe
   def recover(producerStateManager: ProducerStateManager, leaderEpochCache: Option[LeaderEpochFileCache] = None): Int = {
+    // 清空所有的索引文件
     offsetIndex.reset()
     timeIndex.reset()
     txnIndex.reset()
@@ -341,17 +348,21 @@ class LogSegment private[log] (val log: FileRecords,
     var lastIndexEntry = 0
     maxTimestampSoFar = RecordBatch.NO_TIMESTAMP
     try {
+      // 开始遍历日志段中的所有消息集合或消息批次（RecordBatch）
       for (batch <- log.batches.asScala) {
-        batch.ensureValid()
-        ensureOffsetInRange(batch.lastOffset)
+        // 对于读取到的每个消息集合，日志段必须要确保它们是合法的
+        batch.ensureValid() // 该集合中的消息必须要符合 Kafka 定义的二进制格式；
+        ensureOffsetInRange(batch.lastOffset) // 该集合中最后一条消息的位移值不能越界，即它与日志段起始位移的差值必须是一个正整数值。
 
         // The max timestamp is exposed at the batch level, so no need to iterate the records
+        // 代码会更新遍历过程中观测到的最大时间戳以及所属消息的位移值
         if (batch.maxTimestamp > maxTimestampSoFar) {
           maxTimestampSoFar = batch.maxTimestamp
           offsetOfMaxTimestampSoFar = batch.lastOffset
         }
 
         // Build offset index
+        // 不断累加当前已读取的消息字节数，并根据该值有条件地写入索引项
         if (validBytes - lastIndexEntry > indexIntervalBytes) {
           offsetIndex.append(batch.lastOffset, validBytes)
           timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestampSoFar)
@@ -364,6 +375,7 @@ class LogSegment private[log] (val log: FileRecords,
             if (batch.partitionLeaderEpoch >= 0 && cache.latestEpoch.forall(batch.partitionLeaderEpoch > _))
               cache.assign(batch.partitionLeaderEpoch, batch.baseOffset)
           }
+          // 更新事务型Producer的状态以及Leader Epoch缓存
           updateProducerState(producerStateManager, batch)
         }
       }
@@ -372,10 +384,13 @@ class LogSegment private[log] (val log: FileRecords,
         warn("Found invalid messages in log segment %s at byte offset %d: %s. %s"
           .format(log.file.getAbsolutePath, validBytes, e.getMessage, e.getCause))
     }
+    // 遍历执行完成后，Kafka 会将日志段当前总字节数和刚刚累加的已读取字节数进行比较，
+    // 如果发现前者比后者大，说明日志段写入了一些非法消息，需要执行截断操作，将日志段大小调整回合法的数值。
+    // 同时， Kafka 还必须相应地调整索引文件的大小。把这些都做完之后，日志段恢复的操作也就宣告结束了。
     val truncated = log.sizeInBytes - validBytes
     if (truncated > 0)
       debug(s"Truncated $truncated invalid bytes at the end of segment ${log.file.getAbsoluteFile} during recovery")
-
+    // 这个方法会将日志段中的数据强制截断到指定的位移处
     log.truncateTo(validBytes)
     offsetIndex.trimToValidSize()
     // A normally closed segment always appends the biggest timestamp ever seen into log segment, we do this as well.
