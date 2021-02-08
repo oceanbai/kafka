@@ -65,12 +65,14 @@ trait KafkaMetricsGroup extends Logging {
     new MetricName(group, typeName, name, scope, nameBuilder.toString)
   }
 
+  // newGauge方法用于创建数值型的监控指标
   def newGauge[T](name: String, metric: Gauge[T], tags: scala.collection.Map[String, String] = Map.empty): Gauge[T] =
     Metrics.defaultRegistry().newGauge(metricName(name, tags), metric)
 
   def newMeter(name: String, eventType: String, timeUnit: TimeUnit, tags: scala.collection.Map[String, String] = Map.empty): Meter =
     Metrics.defaultRegistry().newMeter(metricName(name, tags), eventType, timeUnit)
 
+  // newHistogram方法用于创建直方图型的监控指标
   def newHistogram(name: String, biased: Boolean = true, tags: scala.collection.Map[String, String] = Map.empty): Histogram =
     Metrics.defaultRegistry().newHistogram(metricName(name, tags), biased)
 
